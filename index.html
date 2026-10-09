@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>North Singapore Live PSI & PM2.5</title>
+<style>
+:root{--bg:#f4f7f6;--card:#fff;--text:#30383d;--muted:#68747a;--accent:#0076a3}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;min-height:100%}
+body{min-height:100vh;padding:2.2vh 2.2vw;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header{text-align:center;margin-bottom:2vh}
+h1{margin:0;color:var(--accent);font-size:clamp(28px,3vw,52px);letter-spacing:.04em}
+.page-subtitle{margin-top:.5vh;color:var(--muted);font-size:clamp(16px,1.5vw,25px)}
+.panels{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1.5vw;min-height:0}
+.panel{background:var(--card);border:1px solid rgba(0,0,0,.05);border-radius:24px;box-shadow:0 10px 30px rgba(0,0,0,.07);padding:2.5vh 1.5vw;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-width:0}
+.panel h2{margin:0 0 1.5vh;color:var(--muted);font-size:clamp(20px,2vw,34px);letter-spacing:.08em}
+.metric-title{color:var(--muted);font-size:clamp(16px,1.4vw,24px);margin-bottom:.5vh}
+.metric-value{font-size:clamp(100px,12vw,220px);font-weight:800;line-height:.95;letter-spacing:-.04em;margin:0 0 2vh;font-variant-numeric:tabular-nums}
+.unit{font-size:clamp(16px,1.4vw,24px);color:var(--muted);margin-top:1.2vh}
+.badge{display:inline-block;border-radius:999px;padding:.8vh 2vw;font-size:clamp(18px,1.7vw,29px);font-weight:750;max-width:100%}
+.good{color:#218838}.moderate{color:#c58b00}.unhealthy{color:#c82333}.very-unhealthy{color:#7838a8}.hazardous{color:#343a40}
+.badge.good{background:#d4edda;color:#155724}.badge.moderate{background:#fff3cd;color:#856404}.badge.unhealthy{background:#f8d7da;color:#721c24}.badge.very-unhealthy{background:#e8d7f5;color:#5a189a}.badge.hazardous{background:#343a40;color:#fff}
+.info{margin-top:1.7vh;display:flex;justify-content:center;flex-wrap:wrap;gap:.7vh 2vw;color:var(--muted);font-size:clamp(14px,1.1vw,19px);text-align:center}
+.info strong{color:var(--text)}
+.error{display:none;margin-top:1vh;padding:10px 14px;border-radius:10px;background:#f8d7da;color:#721c24;font-size:clamp(12px,1vw,16px);overflow-wrap:anywhere}
+footer{margin-top:1vh;text-align:center;color:var(--muted);font-size:clamp(12px,.9vw,16px)}
+@media(max-width:700px){body{padding:12px}header{margin-bottom:12px}.panels{grid-template-columns:1fr;gap:12px}.panel{padding:20px 12px}.metric-value{font-size:clamp(84px,24vw,150px);margin-bottom:12px}.panel h2{margin-bottom:8px}.info{margin-top:12px}}
+@media(max-height:650px) and (min-width:701px){body{padding-top:1vh;padding-bottom:1vh}header{margin-bottom:1vh}.panel{padding-top:1vh;padding-bottom:1vh}.metric-value{margin-bottom:1vh}.info{margin-top:1vh}}
+</style>
+</head>
+<body>
+<header><h1>NORTH SINGAPORE</h1><div class="page-subtitle">Live Air Quality Dashboard</div></header>
+<main class="panels">
+<section class="panel" aria-labelledby="psi-heading">
+<h2 id="psi-heading">24-HOUR PSI</h2><div class="metric-title">Pollutant Standards Index</div>
+<div id="psi-value" class="metric-value moderate">--</div><div id="psi-badge" class="badge moderate">Loading...</div>
+<div id="psi-updated" class="unit">NEA updated: Loading...</div><div id="psi-error" class="error" role="status"></div>
+</section>
+<section class="panel" aria-labelledby="pm-heading">
+<h2 id="pm-heading">1-HOUR PM<sub>2.5</sub></h2><div class="metric-title">Fine particulate matter</div>
+<div id="pm-value" class="metric-value moderate">--</div><div class="unit">&micro;g/m&sup3;</div>
+<div id="pm-badge" class="badge moderate">Loading...</div><div id="pm-updated" class="unit">NEA updated: Loading...</div>
+<div id="pm-error" class="error" role="status"></div>
+</section>
+</main>
+<div class="info"><span><strong>Next refresh:</strong> <span id="countdown">15:00</span></span><span><strong>Singapore time:</strong> <span id="clock">--:--:--</span></span><span><strong>Data source:</strong> data.gov.sg / NEA</span></div>
+<footer>Readings refresh automatically every 15 minutes. Latest available data may be older than the refresh timer.</footer>
+<script>
+'use strict';
+const PSI_API_URL='https://api.data.gov.sg/v1/environment/psi';
+const PM25_API_URL='https://api.data.gov.sg/v1/environment/pm25';
+const REFRESH_INTERVAL=15*60*1000;
+let nextRefreshTime=Date.now()+REFRESH_INTERVAL;
+
+function getPsiStatus(v){
+ if(v<=50)return{text:'GOOD',cls:'good'};
+ if(v<=100)return{text:'MODERATE',cls:'moderate'};
+ if(v<=200)return{text:'UNHEALTHY',cls:'unhealthy'};
+ if(v<=300)return{text:'VERY UNHEALTHY',cls:'very-unhealthy'};
+ return{text:'HAZARDOUS',cls:'hazardous'};
+}
+// Retains the PM2.5 bands from your previous draft; verify with your client if these are their required categories.
+function getPm25Status(v){
+ if(v<=55)return{text:'NORMAL',cls:'good'};
+ if(v<=150)return{text:'ELEVATED',cls:'moderate'};
+ if(v<=250)return{text:'HIGH',cls:'unhealthy'};
+ return{text:'VERY HIGH',cls:'very-unhealthy'};
+}
+function setMetric(valueId,badgeId,value,status){
+ document.getElementById(valueId).textContent=Math.round(value);
+ document.getElementById(valueId).className=`metric-value ${status.cls}`;
+ document.getElementById(badgeId).textContent=status.text;
+ document.getElementById(badgeId).className=`badge ${status.cls}`;
+}
+function formatSgTime(timestamp){
+ if(!timestamp)return'Unavailable';
+ const d=new Date(timestamp);
+ if(Number.isNaN(d.getTime()))return'Unavailable';
+ return d.toLocaleTimeString('en-SG',{timeZone:'Asia/Singapore',hour:'2-digit',minute:'2-digit',hour12:false});
+}
+async function fetchJson(url){
+ const r=await fetch(url,{cache:'no-store'});
+ if(!r.ok)throw new Error(`HTTP ${r.status}`);
+ return r.json();
+}
+async function fetchPsi(){
+ const err=document.getElementById('psi-error');
+ try{
+  const p=await fetchJson(PSI_API_URL),item=p?.items?.[0],north=item?.readings?.psi_twenty_four_hourly?.north;
+  if(north===undefined||north===null||north===''||!Number.isFinite(Number(north)))throw new Error('North 24-hour PSI reading is unavailable');
+  setMetric('psi-value','psi-badge',Number(north),getPsiStatus(Number(north)));
+  document.getElementById('psi-updated').textContent=`NEA updated: ${formatSgTime(item.update_timestamp)}`;
+  err.style.display='none';
+ }catch(e){err.textContent=`PSI update failed: ${e.message}. Retaining last reading if available.`;err.style.display='block';console.error('PSI API error:',e);}
+}
+async function fetchPm25(){
+ const err=document.getElementById('pm-error');
+ try{
+  const p=await fetchJson(PM25_API_URL),item=p?.items?.[0],north=item?.readings?.pm25_one_hourly?.north;
+  if(north===undefined||north===null||north===''||!Number.isFinite(Number(north)))throw new Error('North 1-hour PM2.5 reading is unavailable');
+  setMetric('pm-value','pm-badge',Number(north),getPm25Status(Number(north)));
+  document.getElementById('pm-updated').textContent=`NEA updated: ${formatSgTime(item.update_timestamp)}`;
+  err.style.display='none';
+ }catch(e){err.textContent=`PM2.5 update failed: ${e.message}. Retaining last reading if available.`;err.style.display='block';console.error('PM2.5 API error:',e);}
+}
+async function refreshAll(){
+ await Promise.allSettled([fetchPsi(),fetchPm25()]);
+ nextRefreshTime=Date.now()+REFRESH_INTERVAL;
+ updateCountdown();
+}
+function updateCountdown(){
+ const left=Math.max(0,Math.floor((nextRefreshTime-Date.now())/1000));
+ document.getElementById('countdown').textContent=`${String(Math.floor(left/60)).padStart(2,'0')}:${String(left%60).padStart(2,'0')}`;
+}
+function updateClock(){
+ document.getElementById('clock').textContent=new Date().toLocaleTimeString('en-SG',{timeZone:'Asia/Singapore',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+}
+refreshAll();
+setInterval(refreshAll,REFRESH_INTERVAL);
+setInterval(updateCountdown,1000);
+setInterval(updateClock,1000);
+updateCountdown();updateClock();
+</script>
+</body>
+</html>
